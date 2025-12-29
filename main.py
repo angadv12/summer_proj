@@ -2,14 +2,12 @@ from fastapi import FastAPI
 import uvicorn
 from schemas import NotionEvent
 import services
-import json
 
 app = FastAPI()
 	
 # NOTION WEBHOOK LISTENER
 @app.post("/webhook")
 async def receive_webhook(payload: dict):
-	print(json.dumps(payload, indent=2))
 	data = services.parse_notion_payload(payload)
 	if not data:
 		return {"status": "ignored"}
