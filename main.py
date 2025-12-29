@@ -2,12 +2,14 @@ from fastapi import FastAPI
 import uvicorn
 from schemas import NotionEvent
 import services
+import json
 
 app = FastAPI()
 	
 # NOTION WEBHOOK LISTENER
 @app.post("/webhook")
 async def receive_webhook(payload: dict):
+	print(json.dumps(payload, indent=2))
 	data = services.parse_notion_payload(payload)
 	if not data:
 		return {"status": "ignored"}
@@ -16,16 +18,17 @@ async def receive_webhook(payload: dict):
 
 	category, confidence = services.classify_task(event.title)
 
+	extracted_date, has_time = services.extract_date(event.title)
+
 	print(f"Event: {event.title}")
-	print(f"Due Date: {event.due_date}")
-	print(f"Days Remaining: {event.days_remaining}")
 	print(f"AI Prediction: {category} ({round(confidence * 100)}% confidence)")
+	if extracted_date:
+		print(f"Date detected: {extracted_date}")
 
 	if confidence >= 0.4:
 		print("Updating Notion...")
-		success = await services.update_notion_task(event.id, category)
-		if success:
-			print("Update complete!")
+		success = await services.update_notion_task(event.id, category, extracted_date)
+		print("Update complete!" if success[0] else f"Update failed! {success[1]}")
 	else:
 		print(f"Low confidence, update skipped.")
 
