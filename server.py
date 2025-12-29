@@ -1,19 +1,31 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import json
 import uvicorn
 from transformers import pipeline
+import httpx, os
+from dotenv import load_dotenv
 
+load_dotenv()
 app = FastAPI()
+
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+headers = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2025-09-03"
+}
 
 ## brain - zero-shot classifer
 print('Loading zero-shot model...')
+LABELS = ["Health & Life", "University Work", "Personal Work", "Chores", 
+		   		"Hobby", "Social Event", "Physical Activity"]
 classifer = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 print('Model loaded!')
 
-# 1. normalization layer - incoming notion payload
+# normalization layer - cleans notion payload
 def parse_notion_payload(payload: dict):
 	try:
+		page_id = payload.get("data", {}).get("id", "")
 		properties = payload.get("data", {}).get("properties", {})
 		name_list = properties.get("Name", {}).get("title", [])
 		task_type_list = properties.get("Task type", {}).get("multi_select", [])
@@ -27,6 +39,7 @@ def parse_notion_payload(payload: dict):
 		task_type = "".join([t.get("name", "") for t in task_type_list])
 
 		return {
+			'id': page_id,
 			"title": title,
 			"days_remaining": days_remaining,
 			"due_date": due_date,
@@ -38,7 +51,26 @@ def parse_notion_payload(payload: dict):
 		print(f"Error parsing payload: {e}")
 		return None
 
-# 2. LISTENER - webhook endpoint
+async def update_notion_task(page_id: str, ai_tag: str):
+	url = f"https://api.notion.com/v1/pages/{page_id}"
+	payload = {
+        "properties": {
+            "AI Category": {
+                "select": {
+                    "name": ai_tag
+                }
+            }
+        }
+    }
+
+	async with httpx.AsyncClient() as client:
+		response = await client.patch(url, json=payload, headers=headers)
+		if response.status_code == 200:
+			print(f"Successfully updated Notion page {page_id} with '{ai_tag}'")
+		else:
+			print(f"Failed to update Notion: {response.status_code} - {response.text}")
+
+# LISTENER - webhook endpoint
 @app.post("/webhook")
 async def receive_webhook(payload: dict):
 	clean_data = parse_notion_payload(payload)
@@ -48,21 +80,25 @@ async def receive_webhook(payload: dict):
 		return {"status": "ignored"}
 	
 	# zero-shot classification
-	labels = ["Urgent Crisis", "Deep Work", "Administrative Chore", "Relaxation"]
-	ai_result = classifer(clean_data['title'], labels, multi_label=False)
-
+	ai_result = classifer(clean_data['title'], LABELS, multi_label=False)
 	ai_category = ai_result['labels'][0]
 	ai_confidence = ai_result['scores'][0]
-
 	
 	print("\n--- New Event Detected ---")
 	print(f"Task:   		{clean_data['title']}")
 	print(f"Due:    		{clean_data['due_date']}")
-	print(f"Human Priority:	{clean_data['priority']}")
 	print(f"AI Assessment:	{ai_category} ({round(ai_confidence * 100)}% confidence)")
+	print("-----------------------------\n")	
+
+	if ai_confidence >= 0.4:
+		print("Updating Notion with AI category...")
+		await update_notion_task(clean_data['id'], ai_category)
+	else:
+		print(f"AI confidence ({round(ai_confidence * 100)}%) too low, update skipped.")
+
 	print("-----------------------------\n")
 
-	return {"status": "received", "ai_analysis": ai_category}
+	return {"status": "received", "updated": True}	
 
 @app.get("/")
 async def root():
