@@ -8,29 +8,18 @@ app = FastAPI()
 # NOTION WEBHOOK LISTENER
 @app.post("/webhook")
 async def receive_webhook(payload: dict):
-	data = services.parse_notion_payload(payload)
-	if not data:
+	raw_data = services.parse_notion_payload(payload)
+	if not raw_data:
 		return {"status": "ignored"}
 	
-	event = NotionEvent(**data)
+	event = NotionEvent(**raw_data)
 
-	category, confidence = services.classify_task(event.title)
+	print(f"\n--- New Input: {event.title} ---")
 
-	extracted_date, has_time = services.extract_date(event.title)
+	ai_decision = services.analyze_task(event.title)
 
-	print(f"Event: {event.title}")
-	print(f"AI Prediction: {category} ({round(confidence * 100)}% confidence)")
-	if extracted_date:
-		print(f"Date detected: {extracted_date}")
-
-	if confidence >= 0.4:
-		print("Updating Notion...")
-		success = await services.update_notion_task(event.id, category, extracted_date)
-		print("Update complete!" if success[0] else f"Update failed! {success[1]}")
-	else:
-		print(f"Low confidence, update skipped.")
-
-	print("-----------------------------\n")
+	if ai_decision:
+		await services.update_notion_task(event.id, ai_decision)
 
 	return {"status": "received"}	
 

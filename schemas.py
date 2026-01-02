@@ -1,9 +1,15 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, TypedDict
 
 class NotionEvent(BaseModel):
 	id: str
 	title: str
-	days_remaining: Optional[str] = "Unknown"
-	due_date: Optional[str] = "No due date"
 	priority: Optional[str] = "Unknown"
+	days_remaining: Optional[str] = "Unknown"
+
+class TaskExtraction(TypedDict):
+    category: str
+    priority: str
+    due_date_iso: str | None
+    summary: str
+    is_urgent: bool
